@@ -19,6 +19,7 @@ use strict;
 use Carp;
 use IO::Socket::INET;
 use JSON qw( decode_json );
+use Time::Local 'timelocal_nocheck';
 
 sub new {
 	my $package = shift @_;
@@ -85,13 +86,13 @@ sub initialize {
 		return [ undef, "Waited $gpstimeout seconds, but got no usable information location from the GPS" ];
 	}
 	else {
-		printf "[1;32mLon[[1;37m%3.6fÂ°[1;32m], Lat[[1;37m%3.6fÂ°[1;32m], Alt[[1;37m%3.0fft[1;32m][0m\n", $$json{lon}, $$json{lat}, $$json{alt} * 3.28084 if $debug;
+		printf "[1;32mLon[[1;37m%+3.6f°[1;32m], Lat[[1;37m%+3.6f°[1;32m], Alt[[1;37m%3.0fft[1;32m][0m\n", $$json{lon}, $$json{lat}, $$json{alt} * 3.28084 if $debug;
 	}
 	
 	$self->{lon} = $$json{lon};
 	$self->{lat} = $$json{lat};
 	$self->{speedmph} = $$json{speed} * 2.23694;
-	$self->{timestamp} = $$json{"time"} * 2.23694;
+	$self->{timestamp} = $self->parseRFC3339($$json{"time"});
 
 	return [ 1 ] ;
 }
@@ -112,9 +113,17 @@ sub refresh {
 	$self->{lon} = $$gpsjson{lon};
 	$self->{lat} = $$gpsjson{lat};
 	$self->{speedmph} = $$gpsjson{speed} * 2.23694;
-	$self->{distance} = ($$gpsjson{"time"} - $self->{timestamp}) * $self->{speedmph} * 1.46667; # MPH to feet
+	$self->{distance} = ($self->parseRFC3339($$gpsjson{"time"}) - $self->{timestamp}) * $self->{speedmph} * 1.46667; # MPH to feet
 
-	$self->{timestamp} = $$gpsjson{"time"};
+	$self->{timestamp} = $self->parseRFC3339($$gpsjson{"time"});
+}
+
+sub parseRFC3339 {
+	my $self = shift;
+	my $rfcdate = shift;
+
+	$rfcdate =~ /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d\.?\d*)[A-Z]$/;
+	return Time::Local::timegm($6, $5, $4, $3, $2 - 1, $1);
 }
 
 sub shutdown {
