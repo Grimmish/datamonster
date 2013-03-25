@@ -15,7 +15,6 @@ use Data::Dumper;
 use Geo::KML;
 use IO::Socket::INET;
 use IO::Pipe;
-use JSON qw( decode_json );
 use Time::HiRes qw ( time sleep );
 use DBI;
 use DBD::SQLite;
@@ -77,7 +76,11 @@ $adc->initialize();
 print "[1;32m[[ ADC ready! ]][0m\n\n";
 
 print "\n[1;32m[[ Preparing GPS ]][0m\n";
-my $gpsfeed = &init_GPS();
+my $gpsfeed = new GPSFeed( debug => 0 );
+$_ = $gpsfeed->initialize();
+if (! $$_[0]) {
+	&explode("GPS failed to initialize: $$_[1]");
+}
 print "[1;32m[[ GPS ready! ]][0m\n\n";
 
 print "\n[1;32m[[ Loading and parsing zone data ]][0m\n";
@@ -114,18 +117,15 @@ my $laptime = 0.0; # In tenths/second
 my $lapdistance = 0; # In feet
 
 while (1) {
-	my $rawtext = <$gpsfeed>;
-	my $gpsjson = decode_json($rawtext);
-	next unless ($$gpsjson{class} eq "TPV");
+	$gpsfeed->update();
+	
+	#my $compareTick = &compareTick($referenceLap, $$gpsjson{lon}, $$gpsjson{lat});
 
-	my $compareTick = &compareTick($referenceLap, $$gpsjson{lon}, $$gpsjson{lat});
-
-	my $speedMPH = $$gpsjson{speed} * 2.23694;
 	if ($lasttime > 0) {
-		$laptime += $$gpsjson{"time"} - $lasttime;
-		$lapdistance += ($$gpsjson{"time"} - $lasttime) * $speedMPH * 1.46667; # Probably good maths
+		$laptime += time - $lasttime;
+		$lapdistance += $gpsfeed->{distance};
 	}
-	$lasttime = $$gpsjson{"time"};
+	$lasttime = time;
 	$$lapObj{'lap time'} = $laptime;
 	$$lapObj{'lap number'} = $lapsThisSession;
 
