@@ -29,7 +29,7 @@ sub new {
 	croak("The 'kmlfile' supplied was not valid\n") unless (-r $init{kmlfile});
 
 	print "Loading requested KML file..." if $init{debug};
-	my ($type, $data) = Geo::KML->from(shift @_);
+	my ($type, $data) = Geo::KML->from($init{kmlfile});
 	if ($$data{Document}{name}) {
 		printf "[1;32m%s : OK[0m\n", $$data{Document}{name} if $init{debug};
 	}
