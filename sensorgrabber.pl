@@ -12,8 +12,6 @@ my $_sqlitepath = "./sqlite/datamonster.db";
 use strict;
 use warnings;
 use Data::Dumper;
-use Geo::KML;
-use IO::Socket::INET;
 use IO::Pipe;
 use Time::HiRes qw ( time sleep );
 use DBI;
@@ -118,6 +116,8 @@ my $lapdistance = 0; # In feet
 
 while (1) {
 	$gpsfeed->update();
+	my $readaccl = $accl->measure();
+	my $readgyro = $gyro->measure();
 	
 	#my $compareTick = &compareTick($referenceLap, $$gpsjson{lon}, $$gpsjson{lat});
 
@@ -206,7 +206,6 @@ while (1) {
 		$currentZone;
 
 	printf $fifo "\naccelx/%s\naccely/%s\n", $acceldata[0], $acceldata[1] if (defined $acceldata[0]);
-}
 
 }	
 
