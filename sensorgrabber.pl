@@ -23,6 +23,8 @@ use POSIX "fmod";
 use Math::Trig;
 
 use RPiSerial;
+use GPSFeed;
+use Course;
 use Device::BCM2835;
 
 $SIG{'INT'} = 'quit_signal';
@@ -82,7 +84,7 @@ if (! $$_[0]) {
 print "[1;32m[[ GPS ready! ]][0m\n\n";
 
 print "\n[1;32m[[ Loading and parsing zone data ]][0m\n";
-my ($zonedata, $trackname) = &loadKML($kmlfile);
+my $track = new Course( kmlfile => './tracks/AquariusCircuit.kml', debug => 1 );
 print "[1;32m[[ Zone data ready! ]][0m\n\n";
 
 print "\n[1;32m[[ Opening FIFO pipe to NodeJS ]][0m\n";
@@ -122,33 +124,46 @@ while (1) {
 	#my $compareTick = &compareTick($referenceLap, $$gpsjson{lon}, $$gpsjson{lat});
 
 	if ($lasttime > 0) {
-		$laptime += time - $lasttime;
+		$laptime += $gpsfeed->{timestamp} - $lasttime;
 		$lapdistance += $gpsfeed->{distance};
 	}
-	$lasttime = time;
+	$lasttime = $gpsfeed->{timestamp};
 	$$lapObj{'lap time'} = $laptime;
 	$$lapObj{'lap number'} = $lapsThisSession;
 
-	if ($currentZone ne &whereAmI($$gpsjson{lon}, $$gpsjson{lat}, $zonedata)) {
+	if ($currentZone ne $track->whereAmI($gpsfeed->{lon}, $gpsfeed->{lat})) {
+		#
+		# NEW ZONE
+		#
+
 		if ($currentZone eq "init") {
 			# Cold-start setup
 			$lapObj = { session=>$session, track=>$trackname, 'full lap'=>0, tick=>[] };
 			$laptime = 0;
 		}
 
-		if (&whereAmI($$gpsjson{lon}, $$gpsjson{lat}, $zonedata) eq "Driveway") { #FIXME
+		###########
+		### FIXME
+		###
+		### If this is an off-track zone (pit area, etc), flag this lap as not useable
+		###
+		if ($track->whereAmI($gpsfeed->{lon}, $gpsfeed->{lat}) eq "Driveway") { #FIXME
 			$$lapObj{'full lap'} = 0;
 		}
 
-		if (&whereAmI($$gpsjson{lon}, $$gpsjson{lat}, $zonedata) eq "Start") {
+
+		if ($track->whereAmI($gpsfeed->{lon}, $gpsfeed->{lat}) eq "Start") {
+			#
+			# NEW LAP
+			#
+
+
 			# Fresh lap! Do some bookkeeping on the previous lap...
 			if ($$lapObj{'full lap'}) {
 				$completedLaps++ ;
-				%$referenceLap = %$lapObj;
 			}
 
 			# ...record it...
-			$lapDB->insert($lapObj);
 
 			# ...then set up the new one.
 			$lapObj = { session=>$session, track=>$trackname, 'full lap'=>1, tick=>[] };
@@ -186,25 +201,25 @@ while (1) {
 			laptime => $laptime,
 			dist => $lapdistance,
 			walltime => time,
-			lat => $$gpsjson{lat},
-			lon => $$gpsjson{lon},
+			lat => $gpsfeed->{lat},
+			lon => $gpsfeed->{lon},
 			cz => $currentZone,
 			lz => $lastZone,
-			speed => $speedMPH,
+			speed => $gpsfeed->{speedmph},
 			tiz => $ticksInZone,
-			accelx => $acceldata[0],
-			accely => $acceldata[1],
-			accelz => $acceldata[2]
+			accelx => $$readaccl[0],
+			accely => $$readaccl[1],
+			accelz => $$readaccl[2],
+			gyrox => $$readgyro[0],
+			gyroy => $$readgyro[1],
+			gyroz => $$readgyro[2]
 		});
 
 	select $fifo; $| = 1;
-	
 	printf $fifo "lapcompare/%+05.1f\n", ($laptime - $$compareTick{laptime}) if (defined $compareTick);
-
 	printf $fifo "laptime/%s\ncurrentzone/%s\n",
 		sprintf("%02d:%04.1f", int($laptime / 60), fmod($laptime, 60)),
 		$currentZone;
-
 	printf $fifo "\naccelx/%s\naccely/%s\n", $acceldata[0], $acceldata[1] if (defined $acceldata[0]);
 
 }	
