@@ -75,4 +75,28 @@ sub new {
 	bless \%init => $package;
 }
 
+sub whereAmI {
+	my $self = shift;
+	my $debug = $self->{debug};
+
+	my $lon = shift;
+	my $lat = shift;
+
+	ZONE: foreach my $id (keys %{$self->{zone}}) {
+		my @shape = @{$self->{zone}->{$id}};
+		for (my $pt = 0; $pt < $#shape; $pt++) {
+			# Reference: http://paulbourke.net/geometry/insidepoly/
+			my $comp = (($lat - $shape[$pt]{lat}) * ($shape[$pt+1]{lon} - $shape[$pt]{lon})) - (($lon - $shape[$pt]{lon}) * ($shape[$pt+1]{lat} - $shape[$pt]{lat}));
+			next ZONE if ($comp < 0);
+		}
+
+		# None of the boundaries were rejected; thus, we are in this zone
+		return $id;
+	}
+
+	# All of the zones were rejected; we are not in a zone
+	return "";
+	
+}
+
 1;
