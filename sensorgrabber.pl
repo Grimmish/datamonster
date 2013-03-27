@@ -12,15 +12,9 @@ my $_sqlitepath = "./sqlite/datamonster.db";
 use strict;
 use warnings;
 use Data::Dumper;
-use IO::Pipe;
 use Time::HiRes qw ( time sleep );
-use DBI;
-use DBD::SQLite;
-use Socket;
 use IO::Handle;
 use Fcntl;
-use POSIX "fmod";
-use Math::Trig;
 
 use RPiSerial;
 use GPSFeed;
@@ -39,7 +33,6 @@ if (defined $kmlfile && -r "$kmlfile") {
 else {
 	&explode("ERROR: You must supply a KML file with location information as the first argument.\n    Example: $0 myzones.kml\n\n");
 }
-
 
 Device::BCM2835::init() || die "Could not init library";
 Device::BCM2835::spi_begin();
@@ -84,10 +77,10 @@ if (! $$_[0]) {
 print "[1;32m[[ GPS ready! ]][0m\n\n";
 
 print "\n[1;32m[[ Loading and parsing zone data ]][0m\n";
-my $track = new Course( kmlfile => './tracks/AquariusCircuit.kml', debug => 1 );
+my $track = new Course( kmlfile => $kmlfile, debug => 1 );
 print "[1;32m[[ Zone data ready! ]][0m\n\n";
 
-print "\n[1;32m[[ Opening FIFO pipe to NodeJS ]][0m\n";
+print "\n[1;32m[[ Opening FIFO output pipe ]][0m\n";
 sysopen(my $fifo, $_configFIFOpath, O_NONBLOCK|O_RDWR)
 	or &explode("Couldn't open FIFO pipe: $!");
 print "[1;32m[[ FIFO ready! ]][0m\n\n";
@@ -109,8 +102,7 @@ my $lapObj = {}; # Lap data object
 my $referenceLap = {}; # Comparative lap data object
 my $lapsThisSession = 1;
 my $lasttime = 0;  # Used to determine delay since last position update
-my $currentZone = "init";  # Name of current zone (if any)
-my $lastZone = "";     # Name of last zone (if any)
+my $zoneHistory = [ "init", "" ];  # Last two zones
 my $ticksInZone = 1;  # How many ticks have been recorded since entering the current zone
 my $completedLaps = 0;  # The number of "full laps" completed in this session
 my $laptime = 0.0; # In tenths/second
@@ -131,14 +123,16 @@ while (1) {
 	$$lapObj{'lap time'} = $laptime;
 	$$lapObj{'lap number'} = $lapsThisSession;
 
-	if ($currentZone ne $track->whereAmI($gpsfeed->{lon}, $gpsfeed->{lat})) {
+	my $currentzone = $track->whereAmI($gpsfeed->{lon}, $gpsfeed->{lat});
+
+	if ($currentzone ne $zoneHistory[0]) {
 		#
 		# NEW ZONE
 		#
 
-		if ($currentZone eq "init") {
+		if ($currentzone eq "init") {
 			# Cold-start setup
-			$lapObj = { session=>$session, track=>$trackname, 'full lap'=>0, tick=>[] };
+			$lapObj = { session=>$session, track=>$trackname, 'full lap'=>0 };
 			$laptime = 0;
 		}
 
@@ -147,23 +141,23 @@ while (1) {
 		###
 		### If this is an off-track zone (pit area, etc), flag this lap as not useable
 		###
-		if ($track->whereAmI($gpsfeed->{lon}, $gpsfeed->{lat}) eq "Driveway") { #FIXME
+		if ($currentzone eq "Driveway") {
 			$$lapObj{'full lap'} = 0;
 		}
 
-
-		if ($track->whereAmI($gpsfeed->{lon}, $gpsfeed->{lat}) eq "Start") {
-			#
-			# NEW LAP
-			#
-
-
+		###########
+		### FIXME
+		###
+		### If this is the start/stop line, take appropriate action
+		###
+		if ($currentzone eq "Start") {
 			# Fresh lap! Do some bookkeeping on the previous lap...
 			if ($$lapObj{'full lap'}) {
 				$completedLaps++ ;
 			}
 
 			# ...record it...
+			&handleLap($lapObj);
 
 			# ...then set up the new one.
 			$lapObj = { session=>$session, track=>$trackname, 'full lap'=>1, tick=>[] };
@@ -171,59 +165,92 @@ while (1) {
 			$laptime = 0;
 			$lapdistance = 0;
 		}
-		$lastZone = $currentZone;
-		$currentZone = &whereAmI($$gpsjson{lon}, $$gpsjson{lat}, $zonedata);
+		pop(@$zoneHistory);
+		unshift(@$zoneHistory, $currentzone);
+
 		$ticksInZone = 1;
 	}
 	else {
 		$ticksInZone++;
 	}
 
-	select STDOUT;
-	if (defined $acceldata[0]) { printf "[Accel: [1;35m%+01.2f/%+01.2f/%+01.2f[0m]", @acceldata; }
-	else                       { printf "[Accel: [1;35m--.--/--.--/--.--[0m]"; }
-
-
-	printf " [Zon: [1;32m%11.11s[0m] [LZn: [1;33m%11.11s[0m] ",
-		$currentZone, $lastZone;
-
-	if ($$lapObj{'full lap'} > 0) {
-		printf "[Lap: [1;32m%3d[0m] ", $lapsThisSession;
-	}
-	else {
-		printf "[Lap: [1;31m%3d[0m] ", $lapsThisSession;
-	}
-
-	printf "[Tim: [1;36m%5.1fs[0m]\n", $laptime;
-
-	push(@{$$lapObj{tick}},
-		{
-			laptime => $laptime,
-			dist => $lapdistance,
-			walltime => time,
-			lat => $gpsfeed->{lat},
-			lon => $gpsfeed->{lon},
-			cz => $currentZone,
-			lz => $lastZone,
-			speed => $gpsfeed->{speedmph},
-			tiz => $ticksInZone,
-			accelx => $$readaccl[0],
-			accely => $$readaccl[1],
-			accelz => $$readaccl[2],
-			gyrox => $$readgyro[0],
-			gyroy => $$readgyro[1],
-			gyroz => $$readgyro[2]
-		});
-
-	select $fifo; $| = 1;
-	printf $fifo "lapcompare/%+05.1f\n", ($laptime - $$compareTick{laptime}) if (defined $compareTick);
-	printf $fifo "laptime/%s\ncurrentzone/%s\n",
-		sprintf("%02d:%04.1f", int($laptime / 60), fmod($laptime, 60)),
-		$currentZone;
-	printf $fifo "\naccelx/%s\naccely/%s\n", $acceldata[0], $acceldata[1] if (defined $acceldata[0]);
+	&handleTick({
+		session => $session,
+		laptime => $laptime,
+		dist => $lapdistance,
+		walltime => time,
+		gpstime => $gpsfeed->{timestamp},
+		lat => $gpsfeed->{lat},
+		lon => $gpsfeed->{lon},
+		cz => $currentZone,
+		lz => $lastZone,
+		speed => $gpsfeed->{speedmph},
+		tiz => $ticksInZone,
+		accelx => $$readaccl[0],
+		accely => $$readaccl[1],
+		accelz => $$readaccl[2],
+		gyrox => $$readgyro[0],
+		gyroy => $$readgyro[1],
+		gyroz => $$readgyro[2]
+	});
 
 }	
 
 
 
+##                                          ##
+##  (Subs)                                  #
+##                                        ####
+##                  #                     ####
+##                  #                ###############
+##       ###      ##################################################
+##       ####  ########################################################
+##       ################################################################
+##       ####  ########################################################
+##       ##       ##################################################
+##
+&explode("Abnormal end - should not be here!\n");
 
+sub quit_signal {
+	print "\nQuitting!\n\n";
+
+	if (defined $lapDB) {
+		print "Writing last lap to database...";
+		$$lapObj{'full lap'} = 0;
+		$lapDB->insert($lapObj);
+		print "[1;32mOK[0m\n";
+
+		print "Closing database connection...";
+		undef $lapDB;
+		$sqlitedb->disconnect;
+		#undef $mongoCollection;
+		#undef $mongoConnector;
+		print "[1;32mOK[0m\n";
+	}
+
+	$gpsfeed->shutdown();
+	
+	exit 0;
+}
+
+sub explode {
+	my $message = shift @_;
+	printf "\n[1;31m******* EXITING DUE TO ERROR: *******\n[1;37m$message[1;31m\n*************************************\n[0m";
+	&quit_signal;
+}
+
+sub handleLap {
+	my $lapObj = shift;
+}
+
+sub handleTick {
+	my $tickObj = shift;
+
+	# Write JSON summary to pipe
+	select $fifo; $| = 1;
+	print $fifo "{ \"tick\":{";
+	foreach my $key (keys %$tickObj) {
+		printf $fifo "\"%s\":\"%s\",", $key, $$tickObj{$key};
+	}
+	print $fifo "}}\n";
+}
