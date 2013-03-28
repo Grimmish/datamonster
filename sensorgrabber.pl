@@ -53,44 +53,44 @@ my $spi_cs_broker = new RPiSerial::SerialDevice(
 	clock_rate  => 1000000
 );
 
-print "\n[1;32m[[ Preparing accelerometer ]][0m\n";
+print "[1;32m[[ Preparing accelerometer ]][0m\n";
 my $accl = new RPiSerial::ADXL345( cs_broker => $spi_cs_broker, cs_broker_pin => 1, debug => 0);
 $accl->initialize() or &explode("FAILURE: The accelerometer failed to initialize\n\n");
 print "[1;32m[[ Accelerometer ready! ]][0m\n\n";
 
-print "\n[1;32m[[ Preparing gyroscope ]][0m\n";
+print "[1;32m[[ Preparing gyroscope ]][0m\n";
 my $gyro = new RPiSerial::L3G4200D( cs_broker => $spi_cs_broker, cs_broker_pin => 2, debug => 0);
 $gyro->initialize() or &explore("FAILURE: The gyroscope failed to initialize\n");
 print "[1;32m[[ Gyroscope ready! ]][0m\n\n";
 
-print "\n[1;32m[[ Preparing ADC ]][0m\n";
+print "[1;32m[[ Preparing ADC ]][0m\n";
 my $adc = new RPiSerial::MCP3208( cs_broker => $spi_cs_broker, cs_broker_pin => 3, debug => 0);
 $adc->initialize();
 print "[1;32m[[ ADC ready! ]][0m\n\n";
 
-print "\n[1;32m[[ Preparing GPS ]][0m\n";
-my $gpsfeed = new GPSFeed( debug => 0 );
+print "[1;32m[[ Loading and parsing zone data ]][0m\n";
+my $track = new Course( kmlfile => $kmlfile, debug => 1 );
+print "[1;32m[[ Zone data ready! ]][0m\n\n";
+
+#print "\n[1;32m[[ Opening FIFO output pipe ]][0m\n";
+#sysopen(my $fifo, $_configFIFOpath, O_NONBLOCK|O_RDWR)
+#	or &explode("Couldn't open FIFO pipe: $!");
+#print "[1;32m[[ FIFO ready! ]][0m\n\n";
+#$| = 1;
+
+print "[1;32m[[ Preparing GPS ]][0m\n";
+my $gpsfeed = new GPSFeed( debug => 1 );
 $_ = $gpsfeed->initialize();
 if (! $$_[0]) {
 	&explode("GPS failed to initialize: $$_[1]");
 }
 print "[1;32m[[ GPS ready! ]][0m\n\n";
 
-print "\n[1;32m[[ Loading and parsing zone data ]][0m\n";
-my $track = new Course( kmlfile => $kmlfile, debug => 1 );
-print "[1;32m[[ Zone data ready! ]][0m\n\n";
+#print "\n[1;32m[[ Opening SQLite datafile ]][0m\n";
+#my $sqlitedb = DBI->connect("dbi:SQLite:dbname=" . $_sqlitepath, "", "") || &explode("SQLite DB unavailable");
+#print "[1;32m[[ SQLite ready! ]][0m\n\n";
 
-print "\n[1;32m[[ Opening FIFO output pipe ]][0m\n";
-sysopen(my $fifo, $_configFIFOpath, O_NONBLOCK|O_RDWR)
-	or &explode("Couldn't open FIFO pipe: $!");
-print "[1;32m[[ FIFO ready! ]][0m\n\n";
-$| = 1;
-
-print "\n[1;32m[[ Opening SQLite datafile ]][0m\n";
-my $sqlitedb = DBI->connect("dbi:SQLite:dbname=" . $_sqlitepath, "", "") || &explode("SQLite DB unavailable");
-print "[1;32m[[ SQLite ready! ]][0m\n\n";
-
-print "\n\n[1;30m================================================================================[0m\n";
+print "[1;30m================================================================================[0m\n";
 
 #
 # Rock on
@@ -125,14 +125,14 @@ while (1) {
 
 	my $currentzone = $track->whereAmI($gpsfeed->{lon}, $gpsfeed->{lat});
 
-	if ($currentzone ne $zoneHistory[0]) {
+	if ($currentzone ne $$zoneHistory[0]) {
 		#
 		# NEW ZONE
 		#
 
-		if ($currentzone eq "init") {
+		if ($$zoneHistory[0] eq "init") {
 			# Cold-start setup
-			$lapObj = { session=>$session, track=>$trackname, 'full lap'=>0 };
+			$lapObj = { session=>$session, track=>$track->{trackname}, 'full lap'=>0 };
 			$laptime = 0;
 		}
 
@@ -160,7 +160,7 @@ while (1) {
 			&handleLap($lapObj);
 
 			# ...then set up the new one.
-			$lapObj = { session=>$session, track=>$trackname, 'full lap'=>1, tick=>[] };
+			$lapObj = { session=>$session, track=>$track->{trackname}, 'full lap'=>1, tick=>[] };
 			$lapsThisSession++;
 			$laptime = 0;
 			$lapdistance = 0;
@@ -176,14 +176,16 @@ while (1) {
 
 	&handleTick({
 		session => $session,
+		fulllap => $$lapObj{'full lap'},
+		lapnumber => $lapsThisSession,
 		laptime => $laptime,
 		dist => $lapdistance,
 		walltime => time,
 		gpstime => $gpsfeed->{timestamp},
 		lat => $gpsfeed->{lat},
 		lon => $gpsfeed->{lon},
-		cz => $currentZone,
-		lz => $lastZone,
+		cz => $$zoneHistory[0],
+		lz => $$zoneHistory[1],
 		speed => $gpsfeed->{speedmph},
 		tiz => $ticksInZone,
 		accelx => $$readaccl[0],
@@ -214,21 +216,12 @@ while (1) {
 sub quit_signal {
 	print "\nQuitting!\n\n";
 
-	if (defined $lapDB) {
-		print "Writing last lap to database...";
-		$$lapObj{'full lap'} = 0;
-		$lapDB->insert($lapObj);
-		print "[1;32mOK[0m\n";
+	#if (defined $lapDB) {
+	#	print "Writing last lap to database...";
+	#}
+	
 
-		print "Closing database connection...";
-		undef $lapDB;
-		$sqlitedb->disconnect;
-		#undef $mongoCollection;
-		#undef $mongoConnector;
-		print "[1;32mOK[0m\n";
-	}
-
-	$gpsfeed->shutdown();
+	$gpsfeed->shutdown() if (defined $gpsfeed);
 	
 	exit 0;
 }
@@ -247,10 +240,18 @@ sub handleTick {
 	my $tickObj = shift;
 
 	# Write JSON summary to pipe
-	select $fifo; $| = 1;
-	print $fifo "{ \"tick\":{";
-	foreach my $key (keys %$tickObj) {
-		printf $fifo "\"%s\":\"%s\",", $key, $$tickObj{$key};
-	}
-	print $fifo "}}\n";
+	#select $fifo; $| = 1;
+	#print $fifo "{ \"tick\":{";
+	#foreach my $key (keys %$tickObj) {
+	#	printf $fifo "\"%s\":\"%s\",", $key, $$tickObj{$key};
+	#}
+	#print $fifo "}}\n";
+
+	# Print to screen
+	select STDOUT;
+	printf "[Accel: [1;35m%+01.2f/%+01.2f[0m]", $$tickObj{accelx}, $$tickObj{accely}; 
+	printf " [Zon: [1;32m%11.11s[0m] [TiZ: [1;34m%3d[0m] [LZn: [1;33m%11.11s[0m] ", $$tickObj{cz}, $$tickObj{tiz}, $$tickObj{lz};
+	if ($$tickObj{fulllap} > 0) { printf "[Lap: [1;32m%3d[0m] ", $$tickObj{lapnumber}; }
+	else                          { printf "[Lap: [1;31m%3d[0m] ", $$tickObj{lapnumber}; }
+	printf "[Tim: [1;36m%5.2fs[0m]\n", $$tickObj{laptime};
 }
