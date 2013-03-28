@@ -1,0 +1,22 @@
+body {background-color:#003300;}
+
+p.fifoupdates
+{
+text-align:left;
+font-size:15px;
+color:#AAAAFF;
+font-family:"Lucida Console", Monaco, monospace;
+font-weight:400;
+/*border-style:double double double double;*/
+border-spacing:0px;
+margin:2px;
+padding:0cm 0cm 0cm 0cm;
+}
+
+p.dashdebuginfo
+{
+test-align:left;
+font-size:10pt;
+color:#FFFFFF;
+font-family:"Lucida Console", Monaco, monospace;
+}
