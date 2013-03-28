@@ -45,7 +45,7 @@ sub initialize {
 		or return [ undef, "Could not connect to GPSd on localhost:2947: $@" ];
 	print "[1;32mOK[0m\n" if $debug;
 
-	print "Validating GPSd version...";
+	print "Validating GPSd version..." if $debug;
 	my $greeting = $self->{gpsd}->getline();
 	my $json = decode_json($greeting);
 	if ($json) { print "[1;32m", $$json{release}, "[0m\n" if $debug; }
@@ -97,7 +97,7 @@ sub initialize {
 	return [ 1 ] ;
 }
 
-sub refresh {
+sub update {
 	my $self = shift;
 
 	my $rawtext = $self->{gpsd}->getline();
@@ -123,7 +123,7 @@ sub parseRFC3339 {
 	my $rfcdate = shift;
 
 	$rfcdate =~ /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d\.?\d*)[A-Z]$/;
-	return Time::Local::timegm($6, $5, $4, $3, $2 - 1, $1);
+	return Time::Local::timegm(0, $5, $4, $3, $2 - 1, $1) + $6;
 }
 
 sub shutdown {
