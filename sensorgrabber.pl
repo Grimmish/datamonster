@@ -4,7 +4,7 @@
 # CONFIG
 #
 my $_configFIFOpath = "./var/sensorgrabber.fifo";
-my $_sqlitepath = "./sqlite/datamonster.db";
+my $_sqlitepath = "./sqlite";
 #
 # END CONFIG
 #
@@ -15,6 +15,8 @@ use Data::Dumper;
 use Time::HiRes qw ( time sleep );
 use IO::Handle;
 use Fcntl;
+use DBI;
+use DBD::SQLite;
 
 use RPiSerial;
 use GPSFeed;
@@ -60,7 +62,7 @@ print "[1;32m[[ Accelerometer ready! ]][0m\n\n";
 
 print "[1;32m[[ Preparing gyroscope ]][0m\n";
 my $gyro = new RPiSerial::L3G4200D( cs_broker => $spi_cs_broker, cs_broker_pin => 2, debug => 0);
-$gyro->initialize() or &explore("FAILURE: The gyroscope failed to initialize\n");
+$gyro->initialize() or &explode("FAILURE: The gyroscope failed to initialize\n");
 print "[1;32m[[ Gyroscope ready! ]][0m\n\n";
 
 print "[1;32m[[ Preparing ADC ]][0m\n";
@@ -72,11 +74,11 @@ print "[1;32m[[ Loading and parsing zone data ]][0m\n";
 my $track = new Course( kmlfile => $kmlfile, debug => 1 );
 print "[1;32m[[ Zone data ready! ]][0m\n\n";
 
-#print "\n[1;32m[[ Opening FIFO output pipe ]][0m\n";
-#sysopen(my $fifo, $_configFIFOpath, O_NONBLOCK|O_RDWR)
-#	or &explode("Couldn't open FIFO pipe: $!");
-#print "[1;32m[[ FIFO ready! ]][0m\n\n";
-#$| = 1;
+print "\n[1;32m[[ Opening FIFO output pipe ]][0m\n";
+sysopen(my $fifo, $_configFIFOpath, O_NONBLOCK|O_RDWR)
+	or &explode("Couldn't open FIFO pipe: $!");
+print "[1;32m[[ FIFO ready! ]][0m\n\n";
+$| = 1;
 
 print "[1;32m[[ Preparing GPS ]][0m\n";
 my $gpsfeed = new GPSFeed( debug => 1 );
@@ -86,9 +88,13 @@ if (! $$_[0]) {
 }
 print "[1;32m[[ GPS ready! ]][0m\n\n";
 
-#print "\n[1;32m[[ Opening SQLite datafile ]][0m\n";
-#my $sqlitedb = DBI->connect("dbi:SQLite:dbname=" . $_sqlitepath, "", "") || &explode("SQLite DB unavailable");
-#print "[1;32m[[ SQLite ready! ]][0m\n\n";
+my $session = int(time); # Unique identifier for current session
+
+print "\n[1;32m[[ Opening SQLite datafile ]][0m\n";
+my $sqlitedb = &createDB(sprintf("%s/%s_%d.db", $_sqlitepath, $track->{'trackname'}, $session));
+print "[1;32m[[ SQLite ready! ]][0m\n\n";
+my $sqlLapInsert = $sqlitedb->prepare("INSERT INTO laps(lapnum,laptime,track,full_lap) VALUES (?,?,?,?)");
+my $sqlTickInsert = $sqlitedb->prepare("INSERT INTO ticks(lapnum,laptime,walltime,fullap,dist,gpstime,lat,lon,cz,lz,speed,tiz,gyrox,gyroy,gyroz,accelx,accely,accelz) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
 
 print "[1;30m================================================================================[0m\n";
 
@@ -97,7 +103,6 @@ print "[1;30m==================================================================
 #
 
 # Values that persist across ticks
-my $session = int(time); # Unique identifier for current session
 my $lapObj = {}; # Lap data object
 my $referenceLap = {}; # Comparative lap data object
 my $lapsThisSession = 1;
@@ -220,8 +225,8 @@ sub quit_signal {
 	#	print "Writing last lap to database...";
 	#}
 	
-
 	$gpsfeed->shutdown() if (defined $gpsfeed);
+	$sqlitedb->disconnect;
 	
 	exit 0;
 }
@@ -234,18 +239,44 @@ sub explode {
 
 sub handleLap {
 	my $lapObj = shift;
+
+	# Write DB update
+	$sqlLapInsert->execute($$lapObj{'lap number'},
+	                       $$lapObj{'lap time'},
+	                       $$lapObj{track},
+	                       $$lapObj{'full lap'});
 }
 
 sub handleTick {
 	my $tickObj = shift;
 
 	# Write JSON summary to pipe
-	#select $fifo; $| = 1;
-	#print $fifo "{ \"tick\":{";
-	#foreach my $key (keys %$tickObj) {
-	#	printf $fifo "\"%s\":\"%s\",", $key, $$tickObj{$key};
-	#}
-	#print $fifo "}}\n";
+	select $fifo; $| = 1;
+	print $fifo "{ \"tick\":{";
+	foreach my $key (keys %$tickObj) {
+		printf $fifo "\"%s\":\"%s\",", $key, $$tickObj{$key};
+	}
+	print $fifo "}}\n";
+
+	# Write DB update
+	$sqlTickInsert->execute($$tickObj{lapnumber},
+	                        $$tickObj{laptime},
+	                        $$tickObj{walltime},
+	                        $$tickObj{fulllap},
+	                        $$tickObj{dist},
+	                        $$tickObj{gpstime},
+	                        $$tickObj{lat},
+	                        $$tickObj{lon},
+	                        $$tickObj{cs},
+	                        $$tickObj{lz},
+	                        $$tickObj{speed},
+	                        $$tickObj{tiz},
+	                        $$tickObj{gyrox},
+	                        $$tickObj{gyroy},
+	                        $$tickObj{gyroz},
+	                        $$tickObj{accelx},
+	                        $$tickObj{accely},
+	                        $$tickObj{accelz});
 
 	# Print to screen
 	select STDOUT;
@@ -254,4 +285,39 @@ sub handleTick {
 	if ($$tickObj{fulllap} > 0) { printf "[Lap: [1;32m%3d[0m] ", $$tickObj{lapnumber}; }
 	else                          { printf "[Lap: [1;31m%3d[0m] ", $$tickObj{lapnumber}; }
 	printf "[Tim: [1;36m%5.2fs[0m]\n", $$tickObj{laptime};
+}
+
+sub createDB {
+	my $dbPath = shift;
+
+	my $dbh = DBI->connect("dbi:SQLite:dbname=" . $dbPath, "", "") || &explode( "Can't open new SQLite DB: $DBI::errstr\n");
+
+	$dbh->do( "CREATE TABLE ticks (lapnum      INTEGER,
+	                               laptime     REAL,
+	                               walltime    REAL,
+	                               fullap      INTEGER,
+	                               dist        REAL,
+	                               gpstime     REAL,
+	                               lat         DOUBLE,
+	                               lon         DOUBLE,
+	                               cz          TEXT,
+	                               lz          TEXT,
+	                               speed       REAL,
+	                               tiz         INTEGER,
+	                               gyrox       REAL,
+	                               gyroy       REAL,
+	                               gyroz       REAL,
+	                               accelx      REAL,
+	                               accely      REAL,
+	                               accelz      REAL)");
+
+	print "Created the ticks table\n";
+
+	$dbh->do( "CREATE TABLE laps (lapnum      INTEGER,
+	                              laptime     REAL,
+	                              track       TEXT,
+	                              full_lap    INTEGER)");
+	print "Created the laps table\n";
+
+	return $dbh;
 }
