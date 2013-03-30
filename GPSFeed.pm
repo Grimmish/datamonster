@@ -86,7 +86,7 @@ sub initialize {
 		return [ undef, "Waited $gpstimeout seconds, but got no usable information location from the GPS" ];
 	}
 	else {
-		printf "[1;32mLon[[1;37m%+3.6f°[1;32m], Lat[[1;37m%+3.6f°[1;32m], Alt[[1;37m%3.0fft[1;32m][0m\n", $$json{lon}, $$json{lat}, $$json{alt} * 3.28084 if $debug;
+		printf "[1;32mLon[[1;37m%+3.6f[1;32m], Lat[[1;37m%+3.6f[1;32m], Alt[[1;37m%3.0fft[1;32m][0m\n", $$json{lon}, $$json{lat}, $$json{alt} * 3.28084 if $debug;
 	}
 	
 	$self->{lon} = $$json{lon};
