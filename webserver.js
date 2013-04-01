@@ -3,7 +3,7 @@ var app = require('http').createServer(handler)
 	, fs = require('fs')
 	, url = require('url')
 
-app.listen(8000);
+app.listen(80);
 var fifoStream = fs.createReadStream('./var/sensorgrabber.fifo');
 fifoStream.setEncoding('utf8');
 console.log('[1;32mPipe opened[0m');
