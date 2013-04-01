@@ -219,6 +219,7 @@ while (1) {
 &explode("Abnormal end - should not be here!\n");
 
 sub quit_signal {
+	select STDOUT;
 	print "\nQuitting!\n\n";
 
 	#if (defined $lapDB) {
