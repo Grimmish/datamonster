@@ -11,6 +11,11 @@ my $_sqlitepath = "./sqlite";
 
 use strict;
 use warnings;
+
+BEGIN {
+	print "[1;32mInitializing...[0m\n";
+}
+
 use Data::Dumper;
 use Time::HiRes qw ( time sleep );
 use IO::Handle;
@@ -28,8 +33,8 @@ $SIG{'INT'} = 'quit_signal';
 #
 # Pre-flight
 #
-my $kmlfile = shift @ARGV;
-if (defined $kmlfile && -r "$kmlfile") {
+my $dmlfile = shift @ARGV;
+if (defined $dmlfile && -r "$dmlfile") {
 	# Success!
 }
 else {
@@ -71,7 +76,7 @@ $adc->initialize();
 print "[1;32m[[ ADC ready! ]][0m\n\n";
 
 print "[1;32m[[ Loading and parsing zone data ]][0m\n";
-my $track = new Course( kmlfile => $kmlfile, debug => 1 );
+my $track = new Course( dmlfile => $dmlfile, debug => 1 );
 print "[1;32m[[ Zone data ready! ]][0m\n\n";
 
 print "\n[1;32m[[ Opening FIFO output pipe ]][0m\n";
