@@ -13,7 +13,7 @@ BEGIN {
 	print "Initializing...\n";
 }
 
-use Data::Dumper;
+use Storable;
 use Geo::KML;
 sub usage {
 	print <<'___END';
@@ -80,8 +80,6 @@ $$exportObj{zone} = $zone;
 
 print "\n";
 
-open(my $export, ">", $outfile) or die "Couldn't open the output file ($outfile): $!\n";
-print $export Dumper($exportObj);
-close($export);
+store($exportObj, $outfile) or die "Can't write the output file ($outfile): $!\n";
 
 print "Wrote output file. All done!\n\n";
