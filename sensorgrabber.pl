@@ -3,8 +3,8 @@
 #
 # CONFIG
 #
-my $_configFIFOpath = "./var/sensorgrabber.fifo";
-my $_sqlitepath = "./sqlite";
+my $_serverport = 1992;
+
 #
 # END CONFIG
 #
@@ -18,10 +18,10 @@ BEGIN {
 
 use Data::Dumper;
 use Time::HiRes qw ( time sleep );
-use IO::Handle;
+#use IO::Handle;
+use IO::Socket::INET;
+use JSON qw ( encode_json );
 use Fcntl;
-use DBI;
-use DBD::SQLite;
 
 use RPiSerial;
 use GPSFeed;
@@ -38,7 +38,7 @@ if (defined $dmlfile && -r "$dmlfile") {
 	# Success!
 }
 else {
-	&explode("ERROR: You must supply a KML file with location information as the first argument.\n    Example: $0 myzones.kml\n\n");
+	&explode("ERROR: You must supply a rendered KML file (DML) with location information as the first argument.\n    Example: $0 myzones.dml\n\n");
 }
 
 Device::BCM2835::init() || die "Could not init library";
@@ -79,11 +79,15 @@ print "[1;32m[[ Loading and parsing zone data ]][0m\n";
 my $track = new Course( dmlfile => $dmlfile, debug => 1 );
 print "[1;32m[[ Zone data ready! ]][0m\n\n";
 
-print "\n[1;32m[[ Opening FIFO output pipe ]][0m\n";
-sysopen(my $fifo, $_configFIFOpath, O_NONBLOCK|O_RDWR)
-	or &explode("Couldn't open FIFO pipe: $!");
-print "[1;32m[[ FIFO ready! ]][0m\n\n";
-$| = 1;
+print "[1;32m[[ Starting dispatch server ]][0m\n";
+my $dispatch = IO::Socket::INET->new(Listen     => 5,
+                                     LocalAddr  => 'localhost',
+                                     LocalPort  => $_serverport,
+                                     Proto      => 'tcp',
+                                     Reuse      => 1,
+                                     Blocking   => 0) or &explode("FAILURE: Couldn't create TCP socket for dispatch server: $!");
+print "[1;32m[[ Dispatch server ready! ]][0m\n\n";
+my @clients;
 
 print "[1;32m[[ Preparing GPS ]][0m\n";
 my $gpsfeed = new GPSFeed( debug => 1 );
@@ -94,12 +98,6 @@ if (! $$_[0]) {
 print "[1;32m[[ GPS ready! ]][0m\n\n";
 
 my $session = int(time); # Unique identifier for current session
-
-print "\n[1;32m[[ Opening SQLite datafile ]][0m\n";
-my $sqlitedb = &createDB(sprintf("%s/%s_%d.db", $_sqlitepath, $track->{'trackname'}, $session));
-print "[1;32m[[ SQLite ready! ]][0m\n\n";
-my $sqlLapInsert = $sqlitedb->prepare("INSERT INTO laps(lapnum,laptime,track,full_lap) VALUES (?,?,?,?)");
-my $sqlTickInsert = $sqlitedb->prepare("INSERT INTO ticks(lapnum,laptime,walltime,fullap,dist,gpstime,lat,lon,cz,lz,speed,tiz,gyrox,gyroy,gyroz,accelx,accely,accelz) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
 
 print "[1;30m================================================================================[0m\n";
 
@@ -227,12 +225,7 @@ sub quit_signal {
 	select STDOUT;
 	print "\nQuitting!\n\n";
 
-	#if (defined $lapDB) {
-	#	print "Writing last lap to database...";
-	#}
-	
 	$gpsfeed->shutdown() if (defined $gpsfeed);
-	$sqlitedb->disconnect;
 	
 	exit 0;
 }
@@ -245,44 +238,18 @@ sub explode {
 
 sub handleLap {
 	my $lapObj = shift;
-
-	# Write DB update
-	$sqlLapInsert->execute($$lapObj{'lap number'},
-	                       $$lapObj{'lap time'},
-	                       $$lapObj{track},
-	                       $$lapObj{'full lap'});
+	foreach my $c (@clients) {
+		$c->print(encode_json($lapObj) . "\n");
+	}
 }
 
 sub handleTick {
 	my $tickObj = shift;
 
-	# Write JSON summary to pipe
-	select $fifo; $| = 1;
-	print $fifo "{ \"tick\":{";
-	foreach my $key (keys %$tickObj) {
-		printf $fifo "\"%s\":\"%s\",", $key, $$tickObj{$key};
+	&refreshClients;
+	foreach my $c (@clients) {
+		$c->print(encode_json($tickObj) . "\n");
 	}
-	print $fifo "}}\n";
-
-	# Write DB update
-	$sqlTickInsert->execute($$tickObj{lapnumber},
-	                        $$tickObj{laptime},
-	                        $$tickObj{walltime},
-	                        $$tickObj{fulllap},
-	                        $$tickObj{dist},
-	                        $$tickObj{gpstime},
-	                        $$tickObj{lat},
-	                        $$tickObj{lon},
-	                        $$tickObj{cs},
-	                        $$tickObj{lz},
-	                        $$tickObj{speed},
-	                        $$tickObj{tiz},
-	                        $$tickObj{gyrox},
-	                        $$tickObj{gyroy},
-	                        $$tickObj{gyroz},
-	                        $$tickObj{accelx},
-	                        $$tickObj{accely},
-	                        $$tickObj{accelz});
 
 	# Print to screen
 	select STDOUT;
@@ -293,37 +260,20 @@ sub handleTick {
 	printf "[Tim: [1;36m%5.2fs[0m]\n", $$tickObj{laptime};
 }
 
-sub createDB {
-	my $dbPath = shift;
+sub refreshClients {
+	# Grab another (potential) client. It might be empty, in which case it'll be pruned off below
+	push(@clients, scalar $dispatch->accept());
 
-	my $dbh = DBI->connect("dbi:SQLite:dbname=" . $dbPath, "", "") || &explode( "Can't open new SQLite DB: $DBI::errstr\n");
+	# Prune out disconnected clients (including, potentially, the empty connection we just PUSHed in)
+	foreach my $c (@clients) {
+		$c = undef unless ($c && $c->connected());
+	}
 
-	$dbh->do( "CREATE TABLE ticks (lapnum      INTEGER,
-	                               laptime     REAL,
-	                               walltime    REAL,
-	                               fullap      INTEGER,
-	                               dist        REAL,
-	                               gpstime     REAL,
-	                               lat         DOUBLE,
-	                               lon         DOUBLE,
-	                               cz          TEXT,
-	                               lz          TEXT,
-	                               speed       REAL,
-	                               tiz         INTEGER,
-	                               gyrox       REAL,
-	                               gyroy       REAL,
-	                               gyroz       REAL,
-	                               accelx      REAL,
-	                               accely      REAL,
-	                               accelz      REAL)");
-
-	print "Created the ticks table\n";
-
-	$dbh->do( "CREATE TABLE laps (lapnum      INTEGER,
-	                              laptime     REAL,
-	                              track       TEXT,
-	                              full_lap    INTEGER)");
-	print "Created the laps table\n";
-
-	return $dbh;
+	# Drop UNDEF clients
+	my @rebuild = @clients;
+	@clients = ();
+	for (@rebuild) {
+		push(@clients, $_) if ($_);
+	}
 }
+
