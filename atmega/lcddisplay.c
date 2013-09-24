@@ -4,8 +4,8 @@
 
 #define F_CPU 14745600
 
-
 #include <stdio.h>
+#include <math.h>
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -21,34 +21,38 @@
 // PC4 -- LED anode
 
 int main() {
-  // LED as output
-  DDRC |= (1<<PC4);
-  
-  // turn on LED
-  PORTC |= (1<<PC4);
-
   // fire up the LCD
   lcd_init();
+  FILE lcd_stream = FDEV_SETUP_STREAM(lcd_putchar, 0, _FDEV_SETUP_WRITE);
   lcd_home();
 
   // print message to screen
   //			 20 columns wide:
   //                     01234567890123456789
+
+/*
   lcd_line_one();
   lcd_write_string(PSTR("  Congratulations!  "));
+  delay_ms (500);
   lcd_line_two();
   lcd_write_string(PSTR("********************"));
+  delay_ms (500);
   lcd_line_three();
   lcd_write_string(PSTR("  Your USB NerdKit  "));
+  delay_ms (500);
   lcd_line_four();
   lcd_write_string(PSTR("      is alive!     "));
-                
-  // turn off that LED
-  PORTC &= ~(1<<PC4);
+  delay_ms (4000);
+*/
 
-  // busy loop
+  double chuck = 1;
+
   while(1) {
-    // do nothing
+    lcd_line_one();
+    //                           01234567890123456789
+  	fprintf_P(&lcd_stream, PSTR("Timer:  %4.1f  "), (chuck / 10));
+	chuck++;
+  	delay_ms (100);
   }
   
   return 0;
