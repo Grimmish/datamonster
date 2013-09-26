@@ -8,7 +8,7 @@ all:	lcddisplay-upload
 lcddisplay.hex:	lcddisplay.c
 	make -C libnerdkits
 	avr-gcc ${GCCFLAGS} ${LINKFLAGS} -o lcddisplay.o lcddisplay.c ${LINKOBJECTS}
-	avr-objcopy -j .text -O ihex lcddisplay.o lcddisplay.hex
+	avr-objcopy -O ihex lcddisplay.o lcddisplay.hex
 	
 lcddisplay.ass:	lcddisplay.hex
 	avr-objdump -S -d lcddisplay.o > lcddisplay.ass

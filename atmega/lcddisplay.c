@@ -13,7 +13,7 @@
 #include <inttypes.h>
 
 #include "libnerdkits/delay.h"
-
+#include "libnerdkits/uart.h"
 #include "libnerdkits/lcd.h"
 
 // PIN DEFINITIONS:
@@ -21,39 +21,46 @@
 // PC4 -- LED anode
 
 int main() {
-  // fire up the LCD
-  lcd_init();
-  FILE lcd_stream = FDEV_SETUP_STREAM(lcd_putchar, 0, _FDEV_SETUP_WRITE);
-  lcd_home();
+	// fire up the LCD
+	lcd_init();
+	FILE lcd_stream = FDEV_SETUP_STREAM(lcd_putchar, 0, _FDEV_SETUP_WRITE);
+	FILE uart_stream = FDEV_SETUP_STREAM(uart_putchar, uart_getchar, _FDEV_SETUP_RW);
+	stdin = stdout = &uart_stream;
 
-  // print message to screen
-  //			 20 columns wide:
-  //                     01234567890123456789
+	lcd_home();
 
-/*
-  lcd_line_one();
-  lcd_write_string(PSTR("  Congratulations!  "));
-  delay_ms (500);
-  lcd_line_two();
-  lcd_write_string(PSTR("********************"));
-  delay_ms (500);
-  lcd_line_three();
-  lcd_write_string(PSTR("  Your USB NerdKit  "));
-  delay_ms (500);
-  lcd_line_four();
-  lcd_write_string(PSTR("      is alive!     "));
-  delay_ms (4000);
-*/
+	uint8_t i = 0;
+	char buf[3];
 
-  double chuck = 1;
+	while(1) {
+		if (fgets(buf, sizeof buf - 1, stdin) == NULL)
+			break;
 
-  while(1) {
-    lcd_line_one();
-    //                           01234567890123456789
-  	fprintf_P(&lcd_stream, PSTR("Timer:  %4.1f  "), (chuck / 10));
-	chuck++;
-  	delay_ms (100);
-  }
-  
-  return 0;
+		if (buf[0] == '\n' || buf[0] == '\r') {
+			if      (i < 20) { i = 20; }
+			else if (i < 40) { i = 40; }
+			else if (i < 60) { i = 60; }
+			else if (i < 80) { i = 80; }
+		}
+		else if (buf[0] == '\033') {
+			break;
+			// Quit on ESC
+		}
+		else {
+			i++;
+			if      (i == 21) { lcd_line_two(); }
+			else if (i == 41) { lcd_line_three(); }
+			else if (i == 61) { lcd_line_four(); }
+			else if (i == 81) { lcd_line_one(); i = 0; }
+	
+			fprintf_P(&lcd_stream, PSTR("%s"), buf);
+		}
+  	}
+
+	lcd_clear_and_home();
+    //                     01234567890123456789
+	lcd_write_string(PSTR("FINE! DONE THEN.    "));
+	while (1) {}
+
+	return 0;
 }
