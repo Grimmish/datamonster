@@ -30,37 +30,66 @@ int main() {
 	lcd_home();
 
 	uint8_t i = 0;
-	char buf[3];
+	uint8_t x = 0;
+	char buf[90];
+
+	uint8_t bufcount = 0;
+	uint8_t lcdcol;
+	uint8_t lcdrow;
+	uint8_t over = 0;
 
 	while(1) {
 		if (fgets(buf, sizeof buf - 1, stdin) == NULL)
 			break;
 
-		if (buf[0] == '\n' || buf[0] == '\r') {
-			if      (i < 20) { i = 20; }
-			else if (i < 40) { i = 40; }
-			else if (i < 60) { i = 60; }
-			else if (i < 80) { i = 80; }
-		}
-		else if (buf[0] == '\033') {
-			break;
-			// Quit on ESC
-		}
-		else {
-			i++;
-			if      (i == 21) { lcd_line_two(); }
-			else if (i == 41) { lcd_line_three(); }
-			else if (i == 61) { lcd_line_four(); }
-			else if (i == 81) { lcd_line_one(); i = 0; }
-	
-			fprintf_P(&lcd_stream, PSTR("%s"), buf);
-		}
-  	}
+		printf_P(PSTR("\nFULL TRANSMISSION:%s:\n"), buf);
 
-	lcd_clear_and_home();
-    //                     01234567890123456789
-	lcd_write_string(PSTR("FINE! DONE THEN.    "));
-	while (1) {}
+		lcdcol = 1;
+		lcdrow = 1;
+		lcd_line_one(); 
+		printf_P(PSTR("\nL1:")); 
+
+		for (x=0; x < 90; x++) {
+			if (buf[x] == '\0') {
+				printf_P(PSTR("\n***\n"));
+
+				for (lcdcol; lcdcol < 21; lcdcol++) {
+					fprintf_P(&lcd_stream, PSTR(" "));
+				}
+				lcdrow++;
+				for (lcdrow; lcdrow < 5; lcdrow++) {
+					lcdcol = 1;
+					if      (lcdrow == 2) { lcd_line_two(); }
+					else if (lcdrow == 3) { lcd_line_three(); }
+					else if (lcdrow == 4) { lcd_line_four(); }
+
+					for (lcdcol; lcdcol < 21; lcdcol++) {
+						fprintf_P(&lcd_stream, PSTR(" "));
+					}
+				}
+				break;
+			}
+			else if (buf[x] < 32) {
+    			printf_P(PSTR("*"));
+			}
+			else {
+				fprintf_P(&lcd_stream, PSTR("%c"), buf[x]);
+    			printf_P(PSTR("%c"), buf[x]);
+				//delay_ms(20);
+				lcdcol++;
+				if (lcdcol > 20) {
+					lcdrow++;
+					lcdcol = 1;
+
+					if      (lcdrow == 2) { lcd_line_two(); printf_P(PSTR("\nL2:")); }
+					else if (lcdrow == 3) { lcd_line_three(); printf_P(PSTR("\nL3:")); }
+					else if (lcdrow == 4) { lcd_line_four(); printf_P(PSTR("\nL4:"));  }
+					else if (lcdrow == 5) { break; printf_P(PSTR("\n***\n")); }
+				}
+			}
+		}
+
+  	}
 
 	return 0;
 }
